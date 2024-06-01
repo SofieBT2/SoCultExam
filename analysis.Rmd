@@ -1,0 +1,511 @@
+---
+title: "ABM_sockult"
+author: "Anna"
+date: "2024-04-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages('rethinking')
+install.packages('viridis')
+library(rethinking)
+library(tidyverse)
+
+library(ggplot2)
+library(hrbrthemes)
+library(dplyr)
+library(tidyr)
+library(viridis)
+library(gridExtra)
+
+```
+
+```{r loading data}
+data0 <- read.csv('data/agents_0.csv')
+data1 <- read.csv('data/agents_1.csv')
+data2 <- read.csv('data/agents_2.csv')
+data3 <- read.csv('data/agents_3.csv')
+data4 <- read.csv('data/agents_4.csv')
+data5 <- read.csv('data/agents_5.csv')
+data6 <- read.csv('data/agents_6.csv')
+data7 <- read.csv('data/agents_7.csv')
+data8 <- read.csv('data/agents_8.csv')
+data9 <- read.csv('data/agents_9.csv')
+
+data <- rbind(data0, data1, data2, data3, data4, data5, data6, data7, data8, data9)
+
+intervention0 <- read.csv('data/agents_i_0.csv')
+intervention1 <- read.csv('data/agents_i_1.csv')
+intervention2 <- read.csv('data/agents_i_2.csv')
+intervention3 <- read.csv('data/agents_i_3.csv')
+intervention4 <- read.csv('data/agents_i_4.csv')
+intervention5 <- read.csv('data/agents_i_5.csv')
+intervention6 <- read.csv('data/agents_i_6.csv')
+intervention7 <- read.csv('data/agents_i_7.csv')
+intervention8 <- read.csv('data/agents_i_8.csv')
+intervention9 <- read.csv('data/agents_i_9.csv')
+
+intervention <- rbind(intervention0, intervention1, intervention2, intervention3, intervention4, intervention5, intervention6, intervention7, intervention8, intervention9)
+```
+
+### HYPOTHESIS 1
+
+```{r preprocessing}
+# baseline
+data_h1 <- data %>% filter(tick == max(tick)) # only choosing last tick
+data_h1 <- data_h1 %>% select(-no_symptoms)
+
+data_h1$nj <- ifelse(data_h1$attachment_category == 'Normal Job', 1, 0)
+data_h1$intervention <- 1 # dummy coding this as 1 and 2, as this is the predictor in the following model
+
+# intervention
+intervention_h1 <- intervention %>% filter(tick == max(tick))
+
+intervention_h1$nj <- ifelse(intervention_h1$attachment_category == 'Normal Job', 1, 0)
+intervention_h1$intervention <- 2 # dummy coding this as 1 and 2, as this is the predictor in the following model
+
+# merge
+data_h1 <- rbind(data_h1, intervention_h1)
+data_h1$concussion_level <- ifelse(data_h1$concussion_level == 'pcs', 2, 1)
+```
+
+```{r data to list}
+dat <- list(
+  NJ = as.integer(data_h1$nj),
+  In = as.integer(data_h1$intervention),
+  CL = as.integer(data_h1$concussion_level)
+)
+
+```
+
+```{r model}
+m2 <- ulam(
+  alist(
+    NJ ~ dbern(p),
+    logit(p) <- a[In, CL],
+    matrix[In, CL]:a ~ dnorm(0.5, 1)
+  ),
+  data = dat, chains = 4, log_lik = TRUE
+)
+```
+
+```{r model outputs}
+precis(m2, depth = 3)
+round(inv_logit(precis(m2, depth = 3)$mean),2)
+round(inv_logit(precis(m2, depth = 3)$`5.5%`),2)
+round(inv_logit(precis(m2, depth = 3)$`94.5%`),2)
+```
+
+```{r}
+precis_plot(precis(m2, depth = 3))
+```
+
+### Prior predictive checks
+```{r}
+prior <- extract.prior(m2)
+```
+
+```{r}
+predictions <- link(m2, post = prior, data = dat)
+priormeans <- rowMeans(predictions)
+dens(priormeans, main="Means of Prior Predictions Across All Agents")
+```
+
+### Posterior predictive checks
+```{r}
+post_int <- extract.samples(m2)
+predictions <- link(m2, post = post_int, data = dat)
+postmeans <- rowMeans(predictions)
+dens(postmeans, main="Means of Posterior Predictions Across All Agents")
+```
+
+```{r}
+predicted_nj <- sim(m2, dat)
+mean_predicted <- round(colMeans(predicted_nj), 0)
+table(dat$NJ, mean_predicted)
+```
+### Plotting 
+```{r}
+PrNJ <- inv_logit(post_int$a)
+
+pcs_diff <-PrNJ[, 2, 2] - PrNJ[, 1, 2]
+pcs_diff <- as.data.frame(pcs_diff)
+pcs_diff$group <- 'pcs'
+pcs_diff$value <- pcs_diff$pcs_diff
+pcs_diff <- pcs_diff %>% select(-pcs_diff)
+
+mild_diff <-PrNJ[, 2, 1] - PrNJ[, 1, 1]
+mild_diff <- as.data.frame(mild_diff)
+mild_diff$group <- 'mild'
+mild_diff$value <- mild_diff$mild_diff
+mild_diff <- mild_diff %>% select(-mild_diff)
+
+diffs_h1 <- rbind(pcs_diff, mild_diff)
+diffs_h1_sum <- diffs_h1 %>% group_by(group) %>% summarise(mean(value), ci1 = quantile(value, 0.055), ci2 = quantile(value, 0.945))
+
+diffs_h1 %>%
+  ggplot( aes(x=value, color=group, fill=group)) +
+    geom_density(alpha=0.6) +
+    theme_ipsum() +
+    scale_color_manual(values = c("mild" = "#7DC4D8", "pcs" = "#115163")) +
+    scale_fill_manual(values = c("mild" = "#7DC4D8", "pcs" = "#115163")) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    labs(fill = "Concussion Level",
+         color = "Concussion Level",
+         title = "Return to Normal Job: Contrasts between Baseline and Intervention") +
+    ylab("Density") +
+    xlab("Probability") +
+    theme(
+    plot.title = element_text(size = 12))
+    
+```
+
+### HYPOTHESIS 2
+
+```{r filtering relevant data}
+ids <- data %>% filter(attachment_category == 'Normal Job' & max(tick)) %>% pull(id) # only choosing ids returning to normal job
+
+data_h2 <- data %>% filter(id %in% ids, attachment_category == 'Normal Job') # only choosing ids returning to normal job
+
+data_h2 <- data_h2 %>%
+  group_by(id, concussion_level) %>%
+  slice(1:2) %>%  # Keep only the first two ticks
+  summarise(rtw = diff(tick)-1)
+
+data_h2$intervention <- 1
+
+ids <- intervention %>% filter(attachment_category == 'Normal Job' & max(tick)) %>% pull(id) # only choosing ids returning to normal job
+
+intervention_h2 <- intervention %>% filter(id %in% ids, attachment_category == 'Normal Job') # only choosing ids returning to normal job
+
+intervention_h2 <- intervention_h2 %>%
+  group_by(id, concussion_level) %>%
+  slice(1:2) %>%  # Keep only the first two ticks
+  summarise(rtw = diff(tick)-1)
+
+intervention_h2$intervention <- 2
+
+data_h2 <- rbind(data_h2, intervention_h2)
+data_h2$concussion_level <- ifelse(data_h2$concussion_level == 'pcs', 2, 1)
+
+```
+
+```{r data to list}
+dat <- list(
+  RTW = as.integer(data_h2$rtw),
+  In = as.integer(data_h2$intervention),
+  CL = as.integer(data_h2$concussion_level)
+)
+```
+
+```{r model}
+m3 <- ulam(
+  alist(
+    RTW ~ dnorm(mu, sigma),
+    mu <- a[In, CL],
+    matrix[In,CL]:a ~ dnorm(4, 1),
+    sigma ~ dexp(1)
+  ),
+  data = dat, chains = 4, log_lik = TRUE
+)
+
+```
+
+```{r results}
+precis(m2, depth = 3)
+round((precis(m3, depth = 3)$mean),2)
+round((precis(m3, depth = 3)$`5.5%`),2)
+round((precis(m3, depth = 3)$`94.5%`),2)
+```
+
+```{r}
+precis_plot(precis(m3, depth = 3))
+
+```
+
+### Prior predictive checks
+```{r}
+prior <- extract.prior(m3)
+```
+
+```{r}
+predictions <- link(m3, post = prior, data = dat)
+priormeans <- rowMeans(predictions)
+dens(priormeans, main="Means of Prior Predictions Across All Agents")
+
+```
+
+### Posterior predictive checks
+```{r}
+post_int <- extract.samples(m3)
+predictions <- link(m3, post = post_int, data = dat)
+postmeans <- rowMeans(predictions)
+dens(postmeans, main="Means of Posterior Predictions Across All Agents")
+```
+
+
+```{r plotting}
+meanRTW <- post_int$a
+
+pcs_diff <-meanRTW[, 2, 2] - meanRTW[, 1, 2]
+pcs_diff <- as.data.frame(pcs_diff)
+pcs_diff$group <- 'pcs'
+pcs_diff$value <- pcs_diff$pcs_diff
+pcs_diff <- pcs_diff %>% select(-pcs_diff)
+
+mild_diff <-meanRTW[, 2, 1] - meanRTW[, 1, 1]
+mild_diff <- as.data.frame(mild_diff)
+mild_diff$group <- 'mild'
+mild_diff$value <- mild_diff$mild_diff
+mild_diff <- mild_diff %>% select(-mild_diff)
+
+diffs_h2 <- rbind(pcs_diff, mild_diff)
+diffs_h2_sum <- diffs %>% group_by(group) %>% summarise(mean(value), ci1 = quantile(value, 0.055), ci2 = quantile(value, 0.945))
+
+diffs_h2 %>%
+  ggplot( aes(x=value, color=group, fill=group)) +
+    geom_density(alpha=0.6) +
+    theme_ipsum() +
+    scale_color_manual(values = c("mild" = "#7DC4D8", "pcs" = "#115163")) +
+    scale_fill_manual(values = c("mild" = "#7DC4D8", "pcs" = "#115163")) +
+    geom_vline(xintercept = 0, linetype = "dotted") +
+    labs(fill = "Concussion Level",
+         color = "Concussion Level", 
+         title = 'RTW time: Contrast between Baseline and Intervention') +
+    ylab("Density") +
+    xlab("meanRTW Difference") +
+  theme(
+    plot.title = element_text(size = 12))
+  
+```
+
+### CALIBRATION PLOTS
+
+```{r}
+attachment0 <- read_csv('data/attachment_0.csv')
+attachment1 <- read_csv('data/attachment_1.csv')
+attachment2 <- read_csv('data/attachment_2.csv')
+attachment3 <- read_csv('data/attachment_3.csv')
+attachment4 <- read_csv('data/attachment_4.csv')
+attachment5 <- read_csv('data/attachment_5.csv')
+attachment6 <- read_csv('data/attachment_6.csv')
+attachment7 <- read_csv('data/attachment_7.csv')
+attachment8 <- read_csv('data/attachment_8.csv')
+attachment9 <- read_csv('data/attachment_9.csv')
+
+attachment <- rbind(attachment0, attachment1, attachment2, attachment3, attachment4, attachment5, attachment6, attachment7, attachment8, attachment9)
+
+attachment$Normal_Job <- attachment$`Normal Job`
+attachment$Flex_Job <- attachment$`Flex Job`
+attachment$Disability_Pension <- attachment$`Disability Pension`
+attachment$Retired <- attachment$`Retired`
+attachment$Sick_Leave <- attachment$`Sick Leave`
+attachment$Job_Clarification <- attachment$`Job Clarification`
+
+attachment <- attachment %>% group_by(tick, concussion_level) %>% summarise('NJ' = mean(Normal_Job), 'FJ' = mean(Flex_Job), 'DP' = mean(Disability_Pension), 'R' = mean(Retired), 'SL' = mean(Sick_Leave), 'JC' = mean(Job_Clarification))
+
+calibration <- data.frame('tick'= c(0, 25, 51, 103, 259), 
+                          'Disability_Pension' = c(0, 0.03, 1.12, 0.61, 2.02),
+                          'Flex_Job_Job_Clarification' = c(0, 0.14, -1.04, 0.82, 1.96),
+                          'Retired_Sick_Benefits' = c(0, 4.54, 4.8, 4.31, 2.67))
+
+calibration <- calibration %>% pivot_longer(cols = c(Disability_Pension, Flex_Job_Job_Clarification, Retired_Sick_Benefits), names_to = "group", values_to = "percentage")
+
+attachment <- attachment %>% 
+  pivot_longer(
+    cols = c(R, SL,NJ, FJ, DP, JC),     # Specify columns to merge
+    names_to = "group", # New column for the names
+    values_to = "percentage") # New column for the values
+
+attachment <- attachment %>%
+  unite("group", group, concussion_level, sep = "_")
+attachment <- attachment %>% mutate(group = case_when(
+  group == "R_mild" ~ "Retired, mild",
+  group == "R_pcs" ~ "Retired, pcs",
+  group == "SL_mild" ~ "Sick Leave, mild",
+  group == "SL_pcs" ~ "Sick Leave, pcs",
+  group == "NJ_mild" ~ "Normal Job, mild",
+  group == "NJ_pcs" ~ "Normal Job, pcs",
+  group == "FJ_mild" ~ "Flex Job, mild",
+  group == "FJ_pcs" ~ "Flex Job, pcs",
+  group == "DP_mild" ~ "Disability Pension, mild",
+  group == "DP_pcs" ~ "Disability Pension, pcs",
+  group == "JC_mild" ~ "Job Clarification, mild",
+  group == "JC_pcs" ~ "Job Clarification, pcs",
+  TRUE ~ group
+))
+
+attachment_1 <- attachment %>% filter(group == 'Retired, mild' |group == 'Retired, pcs'|group ==  'Sick Leave, mild'| group ==  'Sick Leave, pcs' | group == 'Job Clarification, mild'| group == 'Job Clarification, pcs')
+calibration_1 <- calibration %>% filter(group == 'Retired_Sick_Benefits')
+
+attachment_2 <- attachment %>% filter(group == 'Flex Job, mild' |group == 'Flex Job, pcs')
+calibration_2 <- calibration %>% filter(group == 'Flex_Job_Job_Clarification')
+
+attachment_3 <- attachment %>% filter(group == 'Disability Pension, mild' |group == 'Disability Pension, pcs')
+calibration_3 <- calibration %>% filter(group == 'Disability_Pension')
+```
+
+```{r calibration: attachment categories}
+p1 <-
+  ggplot() +
+  geom_area(data = attachment_1, aes(x = tick, y = percentage, fill = group), position = "stack", alpha = 0.5) +
+  geom_line(data = calibration_1, aes(x = tick, y = percentage, linetype = "Calibration Line"), size = 0.5, alpha = 0.5) +
+  geom_point(data = calibration_1, aes(x = tick, y = percentage), size = 2) +
+  scale_fill_manual(values = c("Retired, mild" = "#A9CCE3", "Retired, pcs" = "#2471A3", "Sick Leave, mild" = "#E59866", "Sick Leave, pcs" = "#D35400", "Job Clarification, mild" = '#A9DFBF', "Job Clarification, pcs" = '#229954')) +
+  scale_linetype_manual(name = "Calibration", values = c("Calibration Line" = "dashed")) +
+  theme_ipsum() +
+  labs(
+    title = "Calibration: Percentage of Agents in Sick Leave, Job Clarification or Retired",
+    x = "Ticks",
+    y = "Percentage",
+    fill = "Attachment Category, Concussion Level"
+  ) +
+  theme(
+    plot.title = element_text(size = 12)
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    linetype = guide_legend(order = 2, override.aes = list(color = "black"))
+  )
+
+p2 <- 
+  ggplot() +
+  geom_area(data = attachment_2, aes(x = tick, y = percentage, fill = group), position = "stack", alpha = 0.5) +
+  geom_line(data = calibration_2, aes(x = tick, y = percentage, linetype = "Calibration Line"), size = 0.5, alpha = 0.5) +
+  geom_point(data = calibration_2, aes(x = tick, y = percentage), size = 2) +
+  scale_fill_manual(values = c("Flex Job, mild" = "#A9CCE3", "Flex Job, pcs" = "#2471A3")) +
+  scale_linetype_manual(name = "Calibration", values = c("Calibration Line" = "dashed")) +
+  theme_ipsum() +
+  labs(
+    title = "Calibration: Percentage of Agents in Flex Job",
+    x = "Ticks",
+    y = "Percentage",
+    fill = "Attachment Category, Concussion Level"
+  ) +
+  theme(
+    plot.title = element_text(size = 12)
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    linetype = guide_legend(order = 2, override.aes = list(color = "black"))
+  )
+
+p3 <-
+  ggplot() +
+  geom_area(data = attachment_3, aes(x = tick, y = percentage, fill = group), position = "stack", alpha = 0.5) +
+  geom_line(data = calibration_3, aes(x = tick, y = percentage, linetype = "Calibration Line"), size = 0.5, alpha = 0.5) +
+  geom_point(data = calibration_3, aes(x = tick, y = percentage), size = 2) +
+  scale_fill_manual(values = c("Disability Pension, mild" = "#A9CCE3", "Disability Pension, pcs" = "#2471A3")) +
+  scale_linetype_manual(name = "Calibration", values = c("Calibration Line" = "dashed")) +
+  theme_ipsum() +
+  labs(
+    title = "Calibration: Percentage of Agents in Disability Pension",
+    x = "Ticks",
+    y = "Percentage",
+    fill = "Attachment Category, Concussion Level"
+  ) +
+  theme(
+    plot.title = element_text(size = 12)
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    linetype = guide_legend(order = 2, override.aes = list(color = "black"))
+  )
+
+p1
+p2
+p3
+
+```
+```{r calibration: recovery trajectories and amount of recovered agents }
+# compute symptom plot from real data
+symptoms0 <- read_csv('data/symptom_score_0.csv')
+symptoms1 <- read_csv('data/symptom_score_1.csv')
+symptoms2 <- read_csv('data/symptom_score_2.csv')
+symptoms3 <- read_csv('data/symptom_score_3.csv')
+symptoms4 <- read_csv('data/symptom_score_4.csv')
+symptoms5 <- read_csv('data/symptom_score_5.csv')
+symptoms6 <- read_csv('data/symptom_score_6.csv')
+symptoms7 <- read_csv('data/symptom_score_7.csv')
+symptoms8 <- read_csv('data/symptom_score_8.csv')
+symptoms9 <- read_csv('data/symptom_score_9.csv')
+symptoms <- rbind(symptoms0, symptoms1, symptoms2, symptoms3, symptoms4, symptoms5, symptoms6, symptoms7, symptoms8, symptoms9)
+symptoms$symptom_level <- as.factor(symptoms$symptom_level)
+
+symptoms <- symptoms %>% filter(tick <= 52)
+
+ggplot(symptoms, aes(x = tick, y = mean*-1, group = factor(symptom_level), color = factor(symptom_level), fill = factor(symptom_level))) +
+  geom_line(size = 0.5) +
+  geom_ribbon(aes(ymin = pmin(-1 * l, 0), ymax = pmin(- 1* u, 0)), alpha = 0.2, color = NA) +
+  scale_color_manual(values = c("1" = "#D4E6F1", "2" = "#7FB3D5", "3" = "#2471A3", "4" = "#154360")) +
+  scale_fill_manual(values = c("1" = "#EAF2F8", "2" = "#A9CCE3", "3" = "#2980B9", "4" = "#154360")) +
+  theme_ipsum() +
+  labs( color = "Quantile of Symptom Score",
+        fill = "Quantile of Symptom Score") +
+  facet_wrap(~ concussion_level) +
+  theme(axis.title.y = element_blank(),
+        axis.text = element_text(size = 12),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8))
+
+bilag_20 <- data.frame('tick' = c(12, 26, 52), 'percentage' = c(64, 66, 77))
+data_sum <- data %>% group_by(tick) %>% summarise('no_symptoms' = sum(no_symptoms))
+
+ggplot() +
+  geom_area(data = data_sum, aes(x = tick, y = no_symptoms / 100), fill="#A9CCE3", alpha=0.4) +
+  geom_line( data = data_sum, aes(x = tick, y = no_symptoms / 100), color="#2471A3", size=0.7) +
+  geom_bar( data = bilag_20, aes(x = tick, y = percentage), stat = "identity", width = 0.5, alpha = 0.7) +
+  geom_point( data = bilag_20, aes(x = tick, y = percentage), size = 2) +
+  geom_text(data = bilag_20, aes(x = tick, y = percentage, label = percentage), vjust = -1, hjust = 0.5, size = 4, color = "black") +
+  theme_minimal() +
+  labs(title = "Development in Recovered Agents",
+       x = "Tick",
+       y = "Percentage Recovered",
+       fill = "Symptom Level",
+       color = "Symptom Level") +
+  theme(
+    plot.title = element_text(size = 12)
+  )
+
+```
+```{r intervention calibration}
+
+intervention_sum <- intervention %>% group_by(tick, concussion_level) %>% summarise('symptoms_percentage' = mean(symptom_score))
+
+intervention_sum$symptoms_percentage <- ifelse(intervention_sum$concussion_level == 'mild', intervention_sum$symptoms_percentage/intervention_sum$symptoms_percentage[3] *100, intervention_sum$symptoms_percentage/intervention_sum$symptoms_percentage[4] * 100)
+
+intervention_sum <- intervention_sum %>% filter(concussion_level == 'pcs')
+
+points_data <- data.frame(
+  tick = c(3, 15),
+  symptoms_percentage = intervention_sum$symptoms_percentage[c(4, 16)]
+)
+
+ggplot() +
+  geom_area(data = intervention_sum, aes(x = tick, y = symptoms_percentage), fill = "#A9CCE3", alpha = 0.4) +
+  geom_line(data = intervention_sum, aes(x = tick, y = symptoms_percentage), color = "#2471A3", size = 0.7) +
+  geom_point(data = points_data, aes(x = tick, y = symptoms_percentage), color = "black", size = 2) +
+  geom_segment(data = points_data, aes(x = tick, xend = tick, y = 0, yend = symptoms_percentage), color = "black", size = 0.7) + 
+  geom_segment(data = points_data, aes(x = 0, xend = tick, y = symptoms_percentage, yend = symptoms_percentage), color = "black", size = 0.7) + 
+  theme_ipsum() +
+  scale_x_continuous(breaks = points_data$tick) +
+  scale_y_continuous(breaks = round(points_data$symptoms_percentage, digits = 2)) +
+  theme(panel.grid.major = element_blank(),  # Remove major grid lines
+        panel.grid.minor = element_blank()) +
+  labs(
+    title = "Development in symptom score over time",
+    x = "Tick",
+    y = "Percentage of symptom score at concussion incident"
+  ) +
+  theme(
+    plot.title = element_text(size = 12)
+  )
+  
+  
+```
+
+
