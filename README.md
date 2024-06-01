@@ -1,6 +1,6 @@
 # SoCultExam
 ## Agent-based Modelling 
-This repository holds all necessary files to run the analyses conducted in the Social & Cultural Dynamics Paper: TITLE: an ABM approach by Anna Schaap Kristensen & Sofie Bøjgaard Thomsen at Cognitive Science, Aarhus University. 
+This repository holds all necessary files to run the analyses conducted in the Social & Cultural Dynamics Paper: "Getting Ahead: Exploring the impact of impairment-based concussion treatment on labor market attachment in Denmark" by Anna Schaap Kristensen & Sofie Bøjgaard Thomsen at Cognitive Science, Aarhus University. 
 
 ## File overview
 
