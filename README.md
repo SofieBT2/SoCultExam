@@ -6,10 +6,9 @@ This repository holds all necessary files to run the analyses conducted in the S
 
 | File                    | Purpose       |
 | ----------------------- | ------------- |
-| ABM.ipynb               | Content Cell  |
-| ABM_functions.py    | Content Cell  |
-| helper_functions.py  | Content Cell  |
-| analysis??.Rmd          | Content Cell  |
+| ABM.ipynb               | Notebook for running the ABM  |
+| ABM_functions.py    | Functions used for running the ABM |
+| analysis.Rmd          | Analysis of the ABM data |
 
 ## References 
 Paulsen, L.P. & Olsen, E. (2022). Agentbased_Modelling [Python]. https://github.com/laurabpaulsen/agentbased_modelling
