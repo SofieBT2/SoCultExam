@@ -12,4 +12,4 @@ This repository holds all necessary files to run the analyses conducted in the S
 | analysis??.Rmd          | Content Cell  |
 
 ## References 
-Paulsen, L.P. (2022). Agentbased_Modelling [Python??]. https://github.com/laurabpaulsen/agentbased_modelling
+Paulsen, L.P. & Olsen, E. (2022). Agentbased_Modelling [Python]. https://github.com/laurabpaulsen/agentbased_modelling
